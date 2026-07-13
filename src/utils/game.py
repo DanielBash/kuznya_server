@@ -140,6 +140,18 @@ class Object:
         self.connection = None
         self.listeners = {}
 
+    def get_script_by_name(self, name):
+        for script in self.scripts:
+            if script.name == name:
+                return ScriptProxy(script, self)
+        return None
+
+    def get_script_by_identity(self, identity):
+        for script in self.scripts:
+            if script.identity == identity:
+                return ScriptProxy(script, self)
+        return None
+
 
 class Prefab(Object):
     def instance(self):
@@ -182,6 +194,17 @@ class Script:
         exec(self.code,
              {'self': object, '__builtins__': builtins, 'world': self.world, 'script': self},
              self.namespaces[object.identity])
+
+class ScriptProxy:
+    def __init__(self, script, obj):
+        self._script = script
+        self._obj = obj
+
+    def __getattr__(self, name):
+        namespace = self._script.namespaces.get(self._obj.identity, {})
+        if name in namespace:
+            return namespace[name]
+        raise AttributeError(f"Script '{self._script.name}' has no attribute '{name}'")
 
 
 class World:
@@ -307,6 +330,8 @@ class World:
     def start(self):
         self.started = True
         self.last_tick_time = time.time()
+
+        self.trigger('on_start')
 
     def on_schedule(self, time, *args, **kwargs):
         def decorator(func):
