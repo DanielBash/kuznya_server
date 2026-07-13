@@ -35,6 +35,9 @@ class Object:
         # -- обработчик скриптов
         self.listeners = {}
 
+        self.alive = True
+        self._pending_tasks = []
+
     def save(self):
         return {
             'identity': self.identity,
@@ -69,12 +72,12 @@ class Object:
 
     def adopt(self, object):
         if object.parent:
-            object.parent.delete_child(object.identity)
+            object.parent.delete_child_by_identity(object.identity)
         object.world = self.world
         object.parent = self
         self.children.append(object)
 
-    def delete_child(self, identity):
+    def delete_child_by_identity(self, identity):
         for child_indx in range(len(self.children)):
             if self.children[child_indx].identity == identity:
                 child = self.children.pop(child_indx)
@@ -91,16 +94,20 @@ class Object:
             return self.identity
 
     def send(self, message):
+        if not self.alive:
+            return
         if self.connection:
             try:
                 self.connection.send(message)
-            except Exception as e:
+            except Exception:
                 pass
 
     def trigger(self, event, *args, **kwargs):
+        if not self.alive:
+            return
         if event in self.listeners:
-            for listener in self.listeners[event]:
-                listener.__call__(*args, **kwargs)
+            for listener in list(self.listeners[event]):
+                listener(*args, **kwargs)
 
     def on_event(self, event_type):
         def decorator(func):
@@ -115,12 +122,31 @@ class Object:
         for script in self.scripts:
             script.compile(self)
 
+    def die(self):
+        if not self.alive:
+            return
+        self.trigger('on_die')
+        self.alive = False
+        for task in list(self._pending_tasks):
+            if task in self.world.scheduled:
+                self.world.scheduled.remove(task)
+        self._pending_tasks.clear()
+        for child in list(self.children):
+            child.die()
+        self.children = []
+        if self.parent:
+            self.parent.delete_child_by_identity(self.identity)
+        self.parent = None
+        self.connection = None
+        self.listeners = {}
+
 
 class Prefab(Object):
     def instance(self):
         object = Object(world=self.world).load_from_prefab(self)
         object.trigger('on_spawn')
         return object
+
 
 class Script:
     def __init__(self, code=None, name=None, identity=None, world=None):
@@ -135,6 +161,7 @@ class Script:
         self.name = name
         self.identity = identity
         self.world = world
+        self.namespaces = {}
 
     def save(self):
         return {
@@ -151,8 +178,10 @@ class Script:
         return self
 
     def compile(self, object):
+        self.namespaces[object.identity] = {}
         exec(self.code,
-             {'self': object, '__builtins__': builtins, 'world': self.world, 'script': self})
+             {'self': object, '__builtins__': builtins, 'world': self.world, 'script': self},
+             self.namespaces[object.identity])
 
 
 class World:
@@ -172,6 +201,7 @@ class World:
         self.started = False
         self.scheduled = []
         self.last_tick_time = time.time()
+        self.listeners = {}
 
         self.load_new()
 
@@ -282,19 +312,53 @@ class World:
         def decorator(func):
             self.scheduled.append([time, func, args, kwargs])
             return func
+
         return decorator
 
     def schedule(self, func, time, *args, **kwargs):
         self.scheduled.append([time, func, args, kwargs])
+
+    def trigger(self, event, *args, **kwargs):
+        if event in self.listeners:
+            for listener in self.listeners[event]:
+                listener.__call__(*args, **kwargs)
+
+    def on_event(self, event_type):
+        def decorator(func):
+            if event_type not in self.listeners:
+                self.listeners[event_type] = []
+            self.listeners[event_type].append(func)
+            return func
+
+        return decorator
 
     def tick(self):
         current_time = time.time()
         delta_time = current_time - self.last_tick_time
         self.last_tick_time = current_time
 
-        for schedule_indx in range(len(self.scheduled) - 1, -1, -1):
-            schedule = self.scheduled[schedule_indx]
-            schedule[0] -= delta_time
-            if schedule[0] <= 0:
-                schedule[1].__call__(*schedule[2], **schedule[3])
-                del self.scheduled[schedule_indx]
+        for task in self.scheduled[:]:
+            task[0] -= delta_time
+            if task[0] > 0:
+                continue
+
+            func = task[1]
+            owner = getattr(func, '__self__', None)
+
+            if isinstance(owner, Object) and not owner.alive:
+                if task in self.scheduled:
+                    self.scheduled.remove(task)
+                continue
+
+            if len(task) > 4 and isinstance(task[4], Object) and not task[4].alive:
+                if task in self.scheduled:
+                    self.scheduled.remove(task)
+                continue
+
+            try:
+                func(*task[2], **task[3])
+            except Exception as e:
+                print(f"Error in scheduled task: {e}")
+
+            if task in self.scheduled:
+                self.scheduled.remove(task)
