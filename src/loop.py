@@ -1,7 +1,16 @@
+import atexit
+
 def game_loop(world):
     from utils import network
 
     print("[СЕРВЕР] Запуск сервера.")
+
+    def save_on_exit():
+        print("[СЕРВЕР] Сохранение мира...")
+        world.save_filename(world.filename)
+        print("[СЕРВЕР] Мир сохранен.")
+
+    atexit.register(save_on_exit)
 
     world.start()
 

@@ -68,11 +68,11 @@ class Object:
         self.children.append(Object(world=self.world, parent=self))
 
     def adopt(self, object):
+        if object.parent:
+            object.parent.delete_child(object.identity)
         object.world = self.world
         object.parent = self
         self.children.append(object)
-        if object.parent:
-            object.parent.delete_child(object.identity)
 
     def delete_child(self, identity):
         for child_indx in range(len(self.children)):

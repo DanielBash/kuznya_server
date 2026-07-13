@@ -77,6 +77,7 @@ class WebSocketManager:
                 conn = self.disconnections.get_nowait()
                 if conn in self.connections:
                     self.connections.remove(conn)
+                    conn.connected_object.trigger('on_disconnect')
                     print(f"[СЕРВЕР] Подключение прервано. Подключения: {len(self.connections)}")
             except queue.Empty:
                 break
