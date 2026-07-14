@@ -70,6 +70,23 @@ class Object:
     def add_child(self):
         self.children.append(Object(world=self.world, parent=self))
 
+    def transfer_user_connection_to(self, object):
+        object.connection = self.connection
+        self.connection = None
+
+    def schedule(self, func, delay, *args, owner=None, **kwargs):
+        task = [delay, func, args, kwargs, owner or self]
+        self.world.scheduled.append(task)
+        self._pending_tasks.append(task)
+        return task
+
+    def on_schedule(self, delay):
+        def decorator(func):
+            self.schedule(func, delay)
+            return func
+
+        return decorator
+
     def adopt(self, object):
         if object.parent:
             object.parent.delete_child_by_identity(object.identity)
@@ -117,6 +134,25 @@ class Object:
             return func
 
         return decorator
+
+    def find_child(self, name=None, identity=None):
+        if name is not None:
+            for child in self.children:
+                if child.name == name:
+                    return child
+                else:
+                    found = child.find_child(name, identity)
+                    if found:
+                        return found
+        else:
+            for child in self.children:
+                if child.identity == identity:
+                    return child
+                else:
+                    found = child.find_child(name, identity)
+                    if found:
+                        return found
+        return None
 
     def compile_scripts(self):
         for script in self.scripts:
@@ -302,8 +338,27 @@ class World:
                 return found
         return None
 
+    def do_get_prefab_by_name(self, name):
+        for prefab in self.prefabs:
+            found = self.find_in_children_by_name(prefab, name)
+            if found is not None:
+                return found
+        return None
+
     def do_get_object_by_identity(self, identity):
         return self.find_in_children(self.root_object, identity)
+
+    def do_get_object_by_name(self, name):
+        return self.find_in_children(self.root_object, name)
+
+    def find_in_children_by_name(self, object, name):
+        if 'name' in object.attributes and object.attributes['name'] == name:
+            return object
+        for child in object.children:
+            found = self.find_in_children(child, name)
+            if found is not None:
+                return found
+        return None
 
     def find_in_children(self, obj, target_identity):
         if obj.identity == target_identity:
@@ -331,6 +386,7 @@ class World:
         connection_prefab.connection = connection
 
         self.root_object.adopt(connection_prefab)
+        connection_prefab.trigger('on_connect')
 
     def start(self):
         self.started = True
@@ -371,24 +427,12 @@ class World:
             task[0] -= delta_time
             if task[0] > 0:
                 continue
-
-            func = task[1]
-            owner = getattr(func, '__self__', None)
-
+            func, args, kwargs, owner = task[1], task[2], task[3], task[4]
             if isinstance(owner, Object) and not owner.alive:
-                if task in self.scheduled:
-                    self.scheduled.remove(task)
+                if task in self.scheduled: self.scheduled.remove(task)
                 continue
-
-            if len(task) > 4 and isinstance(task[4], Object) and not task[4].alive:
-                if task in self.scheduled:
-                    self.scheduled.remove(task)
-                continue
-
             try:
-                func(*task[2], **task[3])
+                func(*args, **kwargs)
             except Exception as e:
-                print(f"Error in scheduled task: {e}")
-
-            if task in self.scheduled:
-                self.scheduled.remove(task)
+                print(f"[script error] {e}")
+            if task in self.scheduled: self.scheduled.remove(task)
