@@ -190,10 +190,15 @@ class Script:
         return self
 
     def compile(self, object):
-        self.namespaces[object.identity] = {}
-        exec(self.code,
-             {'self': object, '__builtins__': builtins, 'world': self.world, 'script': self},
-             self.namespaces[object.identity])
+        namespace = {
+            'self': object,
+            '__builtins__': builtins,
+            'world': self.world,
+            'script': self
+        }
+        self.namespaces[object.identity] = namespace
+
+        exec(self.code, namespace, namespace)
 
 class ScriptProxy:
     def __init__(self, script, obj):
