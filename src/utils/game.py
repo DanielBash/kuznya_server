@@ -71,8 +71,10 @@ class Object:
         self.children.append(Object(world=self.world, parent=self))
 
     def transfer_user_connection_to(self, object):
+        self.trigger('on_disconnect')
         object.connection = self.connection
         self.connection = None
+        object.trigger('on_connect')
 
     def schedule(self, func, delay, *args, owner=None, **kwargs):
         task = [delay, func, args, kwargs, owner or self]
