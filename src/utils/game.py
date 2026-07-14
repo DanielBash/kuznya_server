@@ -218,6 +218,9 @@ class Prefab(Object):
         object.trigger('on_spawn')
         return object
 
+    def compile_scripts(self):
+        pass
+
 
 class Script:
     def __init__(self, code=None, name=None, identity=None, world=None):
